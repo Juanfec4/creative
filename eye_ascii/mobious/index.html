@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mobius Strip</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #6c7a89;
+    font: 12px/1.4 Menlo, Consolas, monospace; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  canvas { display: block; }
+  #hint { position: fixed; left: 8px; bottom: 4px; opacity: .35; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="hint"></div>
+<script src="rng.js"></script>
+<script src="mobious.js"></script>
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  const FONT_PX = +params.get('font') || 10;
+  if (params.has('speed')) Mobious.options.speed = +params.get('speed');
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const FONT = `bold ${FONT_PX}px Menlo, Consolas, "DejaVu Sans Mono", "Courier New", monospace`;
+
+  ctx.font = FONT;
+  const CW = Math.round(ctx.measureText('M').width);
+  const CH = Math.ceil(FONT_PX * 1.25);
+  const rows = +params.get('rows') || Math.min(Mobious.MAXROWS, Math.floor(innerHeight / CH));
+  const aspect = innerWidth / (rows * CH);
+
+  // layer settings: ?bg=0.6 sets every body layer's background strength, ?chars=0 hides characters,
+  // ?layers=wax,flame turns on only the listed layers
+  const L = Mobious.layers;
+  const BODY = ['glow', 'floor', 'strip', 'edge'];
+  if (params.has('bg')) for (const k of BODY) L[k].bg = +params.get('bg');
+  if (params.get('chars') === '0') for (const k of BODY) L[k].chars = false;
+  if (params.has('layers')) { const on = params.get('layers').split(','); for (const k in L) L[k].on = on.includes(k); }
+
+  Mobious.init(CW, CH, rows, aspect);
+  const { ROWS, COLS, W, H } = Mobious.dims();
+
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = W * dpr; cv.height = H * dpr;
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+
+  const QL = Mobious.QL, RAMP = Mobious.RAMP;
+  const colorCache = new Array(QL * QL * QL);
+  function color(r, g, b) {
+    const k = (r * QL + g) * QL + b;
+    return colorCache[k] || (colorCache[k] = 'rgb(' + Math.floor(r * 255 / (QL - 1)) + ','
+      + Math.floor(g * 255 / (QL - 1)) + ',' + Math.floor(b * 255 / (QL - 1)) + ')');
+  }
+
+  // backgrounds go through a COLS x ROWS image scaled up (one drawImage instead of tens of thousands of fillRects)
+  const bgCanvas = document.createElement('canvas');
+  bgCanvas.width = COLS; bgCanvas.height = ROWS;
+  const bgCtx = bgCanvas.getContext('2d');
+  const bgImg = bgCtx.createImageData(COLS, ROWS);
+  const lut = new Uint8Array(QL);
+  for (let i = 0; i < QL; i++) lut[i] = Math.floor(i * 255 / (QL - 1));
+
+  function draw(idx, q, bq) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+    const d = bgImg.data;
+    for (let p = 0; p < COLS * ROWS; p++) {
+      d[p * 4] = lut[bq[p * 3]]; d[p * 4 + 1] = lut[bq[p * 3 + 1]]; d[p * 4 + 2] = lut[bq[p * 3 + 2]]; d[p * 4 + 3] = 255;
+    }
+    bgCtx.putImageData(bgImg, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(bgCanvas, 0, 0, W, H);
+    ctx.font = FONT;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const p = r * COLS + c;
+        const i = idx[p];
+        if (i === 0) continue;
+        ctx.fillStyle = color(q[p * 3], q[p * 3 + 1], q[p * 3 + 2]);
+        ctx.fillText(RAMP[i], (c + 0.5) * CW, (r + 0.5) * CH);
+      }
+    }
+  }
+
+  let t0 = performance.now() - (+params.get('t') || 0) * 1000;
+  let last = 0, paused = false, pausedAt = 0;
+  const frameMs = 1000 / Mobious.FPS;
+
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (now - last < frameMs - 2) return;
+    last = now;
+    if (paused) return;
+    const { idx, q, bq } = Mobious.renderCells(Math.max(0, (now - t0) / 1000));
+    draw(idx, q, bq);
+  }
+
+  addEventListener('keydown', (e) => {
+    if (e.key === ' ') { e.preventDefault(); paused = !paused; if (paused) pausedAt = performance.now(); else t0 += performance.now() - pausedAt; }   // freeze / resume the motion
+    else if (e.key >= '1' && e.key <= '5') {
+      const k = ['dust', 'glow', 'floor', 'strip', 'edge'][+e.key - 1]; L[k].on = !L[k].on;
+    }
+    else if (e.key === 'b' || e.key === 'B') {                                      // cycle background strength
+      const steps = [0.35, 0.6, 0.85, 0]; const i = steps.findIndex((v) => Math.abs(v - L.strip.bg - 0.15) < 0.2);
+      const nxt = steps[(i + 1) % steps.length];
+      for (const k of BODY) L[k].bg = nxt;
+    }
+    else if (e.key === 'c' || e.key === 'C') { const on = !L.strip.chars; for (const k of BODY) L[k].chars = on; }
+    else if (e.key === 'ArrowUp') Mobious.options.speed *= 1.25;
+    else if (e.key === 'ArrowDown') Mobious.options.speed /= 1.25;
+  });
+
+  document.getElementById('hint').textContent =
+    'space pause · ↑/↓ speed · layers: 1 dust 2 glow 3 floor 4 strip 5 edge · B background · C characters · ?speed=1.5 ?font=12 ?rows=60 ?bg=0.6 ?chars=0 ?layers=strip,edge';
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

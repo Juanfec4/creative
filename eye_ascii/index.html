@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eye -> Space</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #010203; color: #6c7a89;
+    font: 12px/1.4 Menlo, Consolas, monospace; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  canvas { display: block; }
+  #hint { margin-top: 8px; opacity: .7; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="hint">Preparing textures...</div>
+<script src="rng.js"></script>
+<script src="eye.js"></script>
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  const FONT_PX = +params.get('font') || 14;
+  const hint = document.getElementById('hint');
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const FONT = `bold ${FONT_PX}px Menlo, Consolas, "DejaVu Sans Mono", "Courier New", monospace`;
+
+  ctx.font = FONT;
+  const CW = Math.round(ctx.measureText('M').width);
+  const CH = Math.ceil(FONT_PX * 1.25);
+  const rows = +params.get('rows') || Math.min(Eye.MAXROWS, Math.floor((innerHeight - 50) / CH));
+
+  Eye.init(CW, CH, rows);
+  const { ROWS, COLS, W, H } = Eye.dims();
+
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = W * dpr; cv.height = H * dpr;
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+
+  const QL = Eye.QL, RAMP = Eye.RAMP;
+  const colorCache = new Array(QL * QL * QL);
+  function color(r, g, b) {
+    const k = (r * QL + g) * QL + b;
+    return colorCache[k] || (colorCache[k] = 'rgb(' + Math.floor(r * 255 / (QL - 1)) + ','
+      + Math.floor(g * 255 / (QL - 1)) + ',' + Math.floor(b * 255 / (QL - 1)) + ')');
+  }
+
+  function draw(idx, q) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#010203';
+    ctx.fillRect(0, 0, W, H);
+    ctx.font = FONT;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const p = r * COLS + c;
+        const i = idx[p];
+        if (i === 0) continue;
+        ctx.fillStyle = color(q[p * 3], q[p * 3 + 1], q[p * 3 + 2]);
+        ctx.fillText(RAMP[i], (c + 0.5) * CW, (r + 0.5) * CH);
+      }
+    }
+  }
+
+  let t0 = performance.now() - (+params.get('t') || 0) * 1000;
+  let last = 0;
+  const frameMs = 1000 / Eye.FPS;
+
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (now - last < frameMs - 2) return;
+    last = now;
+    const t = Math.max(0, (now - t0) / 1000);
+    const dt = Math.min(Math.max(t - Eye.S.last, 0), 0.1);
+    const { idx, q } = Eye.renderCells(t, dt);
+    draw(idx, q);
+  }
+
+  function seek(sec) { t0 -= sec * 1000; }
+  function restart() { t0 = performance.now(); Eye.reset(); }
+
+  addEventListener('keydown', (e) => {
+    if (e.key === 'r' || e.key === 'R') restart();
+    else if (e.key === 'ArrowRight') seek(5);
+    else if (e.key === 'ArrowLeft') seek(-5);
+  });
+
+  hint.textContent = 'R restart · ←/→ seek 5s · ?t=20 start offset · ?rows=40 ?font=16';
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
