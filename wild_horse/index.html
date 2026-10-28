@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wild Horse</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #07040a; color: #8a7a6a;
+    font: 12px/1.4 Menlo, Consolas, monospace; overflow: hidden; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  canvas { display: block; }
+  #hint { position: fixed; left: 8px; bottom: 4px; opacity: .35; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="hint"></div>
+<script src="horse.js"></script>
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  const FONT_PX = +params.get('font') || 9;
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const FONT = `bold ${FONT_PX}px Menlo, Consolas, "DejaVu Sans Mono", "Courier New", monospace`;
+
+  ctx.font = FONT;
+  const CW = Math.round(ctx.measureText('M').width);
+  const CH = Math.ceil(FONT_PX * 1.25);
+  const COLS = Math.floor(innerWidth / CW);
+  const ROWS = +params.get('rows') || Math.floor(innerHeight / CH);
+
+  WildHorse.init(CW, CH, COLS, ROWS);
+  const { W, H } = WildHorse.dims();
+
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = W * dpr; cv.height = H * dpr;
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+
+  const bgCanvas = document.createElement('canvas');
+  bgCanvas.width = COLS; bgCanvas.height = ROWS;
+  const bgCtx = bgCanvas.getContext('2d');
+  const bgImg = bgCtx.createImageData(COLS, ROWS);
+
+  const styleCache = new Array(32 * 32 * 32);
+  function color(r, g, b) {
+    const k = ((r >> 3) * 32 + (g >> 3)) * 32 + (b >> 3);
+    return styleCache[k] || (styleCache[k] = 'rgb(' + ((r >> 3) << 3) + ',' + ((g >> 3) << 3) + ',' + ((b >> 3) << 3) + ')');
+  }
+
+  function draw(frame) {
+    const { ch, fg, bg } = frame;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const d = bgImg.data;
+    for (let p = 0; p < COLS * ROWS; p++) {
+      d[p * 4] = bg[p * 3]; d[p * 4 + 1] = bg[p * 3 + 1]; d[p * 4 + 2] = bg[p * 3 + 2]; d[p * 4 + 3] = 255;
+    }
+    bgCtx.putImageData(bgImg, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(bgCanvas, 0, 0, W, H);
+    ctx.font = FONT;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const p = r * COLS + c, code = ch[p];
+        if (code === 32) continue;
+        ctx.fillStyle = color(fg[p * 3], fg[p * 3 + 1], fg[p * 3 + 2]);
+        ctx.fillText(String.fromCharCode(code), (c + 0.5) * CW, (r + 0.5) * CH);
+      }
+    }
+  }
+
+  let t0 = performance.now() - (+params.get('t') || 0) * 1000;
+  let paused = false, pausedAt = 0, last = 0;
+  const frameMs = 1000 / WildHorse.FPS;
+
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (paused || now - last < frameMs - 2) return;
+    last = now;
+    draw(WildHorse.renderCells(Math.max(0, (now - t0) / 1000)));
+  }
+
+  addEventListener('keydown', (e) => {
+    if (e.key === 'r' || e.key === 'R') t0 = performance.now();
+    else if (e.key === 'ArrowRight') t0 -= 5000;
+    else if (e.key === 'ArrowLeft') t0 += 5000;
+    else if (e.key === ' ') {
+      e.preventDefault();
+      if (paused) { t0 += performance.now() - pausedAt; paused = false; } else { paused = true; pausedAt = performance.now(); }
+    }
+  });
+
+  document.getElementById('hint').textContent =
+    'space pause · R restart · ←/→ seek 5s · ?t=15 start time · ?rows=60 ?font=12';
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
